@@ -1,0 +1,358 @@
+﻿{% extends 'base.html' %}
+
+{% block content %}
+<button class="sidebar-toggle" type="button" onclick="toggleSidebar()" aria-label="Open navigation" aria-controls="app-sidebar" aria-expanded="false">
+  <i class="ti ti-menu-2"></i>
+</button>
+<div class="sidebar-scrim" onclick="closeSidebar()" aria-hidden="true"></div>
+
+<!-- SIDEBAR -->
+<aside class="sidebar" id="app-sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-text"><span class="logo-dot"></span>DataTrack Pro</div>
+    <div class="logo-sub">Centralized Database System</div>
+  </div>
+  <nav class="nav">
+    <div class="nav-section">Main</div>
+    <div class="nav-item active" onclick="showPage('dashboard',this)"><i class="ti ti-layout-dashboard"></i>Dashboard</div>
+    <div class="nav-item" onclick="showPage('records',this)"><i class="ti ti-database"></i>Records<span class="nav-badge" id="nav-count">0</span></div>
+    <div class="nav-item" onclick="showPage('daily',this)"><i class="ti ti-calendar"></i>Daily View</div>
+    <div class="nav-item" onclick="showPage('reports',this)"><i class="ti ti-chart-bar"></i>Reports</div>
+
+    <div class="nav-section">System</div>
+    <div class="nav-item" onclick="showPage('audit',this)"><i class="ti ti-shield-check"></i>Audit Trail</div>
+    <div class="nav-item" onclick="showPage('backup',this)"><i class="ti ti-archive"></i>Backup &amp; Recovery</div>
+    <div class="nav-item" onclick="showPage('users',this)"><i class="ti ti-users"></i>Users</div>
+    <div class="nav-item" onclick="showPage('settings',this)"><i class="ti ti-settings"></i>Settings</div>
+  </nav>
+  <div class="sidebar-footer">
+    <div class="user-card">
+      <div class="user-avatar" id="sidebar-avatar">A</div>
+      <div>
+        <div class="user-name" id="sidebar-username">Admin User</div>
+        <div class="user-role" id="sidebar-role">Administrator</div>
+      </div>
+      <div class="live-dot" title="Connected"></div>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<div class="main">
+  <div class="topbar">
+    <div class="topbar-heading">
+      <div class="page-title" id="topbar-title">Dashboard</div>
+      <div class="breadcrumb" id="topbar-breadcrumb">Overview of all data</div>
+    </div>
+    <div class="topbar-actions">
+      <div class="realtime-badge"><span class="status-dot"></span>Live Sync Active</div>
+      <div class="search-box"><i class="ti ti-search search-icon"></i><input type="text" placeholder="Search records..." id="global-search" oninput="globalSearch(this.value)" /></div>
+      <button class="btn btn-primary" onclick="openModal('add')"><i class="ti ti-plus"></i>New Record</button>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- DASHBOARD PAGE -->
+    <div class="page active" id="page-dashboard">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label"><i class="ti ti-database" style="font-size:14px;color:var(--accent)"></i>Total Records</div>
+          <div class="stat-value" id="stat-total">0</div>
+          <div class="stat-change up" id="stat-total-change"><i class="ti ti-trending-up"></i><span>0 today</span></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><i class="ti ti-circle-check" style="font-size:14px;color:var(--success)"></i>Completed</div>
+          <div class="stat-value" id="stat-completed">0</div>
+          <div class="stat-change up" id="stat-completed-pct"><span>0% completion rate</span></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><i class="ti ti-clock" style="font-size:14px;color:var(--warning)"></i>Pending</div>
+          <div class="stat-value" id="stat-pending">0</div>
+          <div class="stat-change" id="stat-pending-sub" style="color:var(--text3)"><span>Awaiting action</span></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><i class="ti ti-refresh" style="font-size:14px;color:var(--info)"></i>Updated Today</div>
+          <div class="stat-value" id="stat-updated">0</div>
+          <div class="stat-change" style="color:var(--text3)"><span>Real-time tracking</span></div>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div class="card">
+          <div class="card-header">
+            <div><div class="card-title">Activity Overview (Last 7 Days)</div><div class="card-sub">Records added and updated per day</div></div>
+          </div>
+          <div class="chart-container"><canvas id="activityChart" role="img" aria-label="Activity chart showing records added and updated over the past 7 days"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Status Breakdown</div></div>
+          <div class="chart-container" style="height:200px"><canvas id="statusChart" role="img" aria-label="Donut chart showing record status distribution"></canvas></div>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div class="card">
+          <div class="card-header">
+            <div><div class="card-title">Recent Records</div><div class="card-sub">Latest 5 entries</div></div>
+            <button class="btn btn-secondary btn-sm" onclick="showPage('records',null)">View all</button>
+          </div>
+          <div id="recent-records-list"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">User Activity</div></div>
+          <div id="user-activity-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RECORDS PAGE -->
+    <div class="page" id="page-records">
+      <div class="card flush-card">
+        <div class="card-header compact-card-header">
+          <div><div class="card-title">All Records</div><div class="card-sub" id="records-count-label">Loading...</div></div>
+          <div class="toolbar-row">
+            <select class="control-sm" id="filter-status" onchange="renderRecordsTable()">
+              <option value="">All Status</option>
+              <option value="completed">Completed</option>
+              <option value="pending">Pending</option>
+              <option value="in-progress">In Progress</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+            <select class="control-sm" id="filter-priority" onchange="renderRecordsTable()">
+              <option value="">All Priority</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+            <button class="btn btn-secondary btn-sm" onclick="exportCSV()"><i class="ti ti-download"></i>Export</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th><th>Title</th><th>Department</th><th>Priority</th><th>Status</th><th>Created By</th><th>Created</th><th>Last Updated</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="records-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- DAILY VIEW PAGE -->
+    <div class="page" id="page-daily">
+      <div class="tabs">
+        <div class="tab active" onclick="setDailyTab('today',this)">Today</div>
+        <div class="tab" onclick="setDailyTab('yesterday',this)">Yesterday</div>
+        <div class="tab" onclick="setDailyTab('week',this)">This Week</div>
+        <div class="tab" onclick="setDailyTab('month',this)">This Month</div>
+      </div>
+      <div class="stats-grid stats-grid-3" id="daily-stats"></div>
+      <div class="card">
+        <div class="card-header"><div class="card-title" id="daily-table-title">Today's Records</div></div>
+        <div class="table-wrap">
+          <table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Created By</th><th>Time</th></tr></thead>
+          <tbody id="daily-tbody"></tbody></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- REPORTS PAGE -->
+    <div class="page" id="page-reports">
+      <div class="page-toolbar">
+        <div class="card-title">Daily Report â€” <span id="report-date"></span></div>
+        <div class="toolbar-row">
+          <button class="btn btn-secondary btn-sm" onclick="generateReport()"><i class="ti ti-refresh"></i>Refresh</button>
+          <button class="btn btn-primary btn-sm" onclick="printReport()"><i class="ti ti-printer"></i>Print Report</button>
+        </div>
+      </div>
+      <div class="stats-grid" id="report-stats"></div>
+      <div class="two-col">
+        <div class="card">
+          <div class="card-header"><div class="card-title">User-wise Performance</div></div>
+          <div id="user-performance"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Department Breakdown</div></div>
+          <div class="chart-container" style="height:200px"><canvas id="deptChart" role="img" aria-label="Bar chart showing records by department"></canvas></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Monthly Trend</div></div>
+        <div class="chart-container"><canvas id="trendChart" role="img" aria-label="Line chart showing monthly record trends"></canvas></div>
+      </div>
+    </div>
+
+    <!-- AUDIT TRAIL PAGE -->
+    <div class="page" id="page-audit">
+      <div class="card">
+        <div class="card-header">
+          <div><div class="card-title">Audit Trail</div><div class="card-sub">Complete history of all changes</div></div>
+          <button class="btn btn-secondary btn-sm" onclick="exportAudit()"><i class="ti ti-download"></i>Export Log</button>
+        </div>
+        <div id="audit-list"></div>
+      </div>
+    </div>
+
+    <!-- BACKUP PAGE -->
+    <div class="page" id="page-backup">
+      <div class="three-col">
+        <div class="stat-card">
+          <div class="stat-label"><i class="ti ti-archive" style="font-size:14px;color:var(--info)"></i>Total Backups</div>
+          <div class="stat-value" id="backup-count">0</div>
+          <div class="stat-change" style="color:var(--text3)">Stored securely</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><i class="ti ti-clock" style="font-size:14px;color:var(--success)"></i>Last Backup</div>
+          <div class="stat-value" style="font-size:18px" id="last-backup">Never</div>
+          <div class="stat-change up">Auto-backup enabled</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label"><i class="ti ti-database" style="font-size:14px;color:var(--purple)"></i>Data Size</div>
+          <div class="stat-value" id="data-size">0 KB</div>
+          <div class="stat-change" style="color:var(--text3)">Compressed</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div><div class="card-title">Backup Management</div><div class="card-sub">Create, restore, and manage database backups</div></div>
+          <button class="btn btn-primary" onclick="createBackup()"><i class="ti ti-archive"></i>Create Backup Now</button>
+        </div>
+        <div id="backup-list"></div>
+      </div>
+    </div>
+
+    <!-- USERS PAGE -->
+    <div class="page" id="page-users">
+      <div class="card">
+        <div class="card-header">
+          <div><div class="card-title">System Users</div><div class="card-sub">Manage users and their activity</div></div>
+          <button class="btn btn-primary" onclick="openAddUserModal()"><i class="ti ti-user-plus"></i>Add User</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>User</th><th>Role</th><th>Records Created</th><th>Last Active</th><th>Status</th></tr></thead>
+            <tbody id="users-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- SETTINGS PAGE -->
+    <div class="page" id="page-settings">
+      <div class="two-col equal-col">
+        <div class="card">
+          <div class="card-title card-title-spaced">System Settings</div>
+          <div class="stack">
+            <div class="form-group"><label>Current User Name</label><input type="text" id="set-username" placeholder="Your name" /></div>
+            <div class="form-group"><label>Current User Role</label>
+              <select id="set-role"><option>Administrator</option><option>Manager</option><option>Analyst</option><option>Viewer</option></select>
+            </div>
+            <div class="form-group"><label>Auto-backup Frequency</label>
+              <select id="set-backup"><option>Daily</option><option>Hourly</option><option>Weekly</option></select>
+            </div>
+            <div class="form-group"><label>Default Record Status</label>
+              <select id="set-default-status"><option>pending</option><option>in-progress</option><option>completed</option></select>
+            </div>
+            <button class="btn btn-primary" onclick="saveSettings()"><i class="ti ti-check"></i>Save Settings</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title card-title-spaced">Data Management</div>
+          <div class="stack stack-sm">
+            <div class="action-panel">
+              <div class="action-title">Export All Data</div>
+              <div class="text-xs action-copy">Download a full CSV export of all records</div>
+              <button class="btn btn-secondary btn-sm" onclick="exportCSV()"><i class="ti ti-download"></i>Export CSV</button>
+            </div>
+            <div class="action-panel">
+              <div class="action-title">Seed Sample Data</div>
+              <div class="text-xs action-copy">Add 10 sample records for demo purposes</div>
+              <button class="btn btn-secondary btn-sm" onclick="seedData()"><i class="ti ti-database"></i>Seed Demo Data</button>
+            </div>
+            <div class="action-panel action-panel-danger">
+              <div class="action-title danger-text">Clear All Data</div>
+              <div class="text-xs action-copy">Permanently delete all records (irreversible)</div>
+              <button class="btn btn-danger btn-sm" onclick="clearAllData()"><i class="ti ti-trash"></i>Clear Data</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ADD/EDIT MODAL -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-title">New Record</div>
+      <button class="modal-close" onclick="closeModal()"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="form-grid">
+      <input type="hidden" id="edit-id" />
+      <div class="form-group full"><label>Record Title *</label><input type="text" id="f-title" placeholder="Enter record title..." /></div>
+      <div class="form-group"><label>Department</label>
+        <select id="f-dept">
+          <option>Engineering</option><option>Marketing</option><option>Sales</option><option>HR</option><option>Finance</option><option>Operations</option><option>Product</option><option>Design</option>
+        </select>
+      </div>
+      <div class="form-group"><label>Priority</label>
+        <select id="f-priority"><option value="high">High</option><option value="medium" selected>Medium</option><option value="low">Low</option></select>
+      </div>
+      <div class="form-group"><label>Status</label>
+        <select id="f-status"><option value="pending">Pending</option><option value="in-progress">In Progress</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select>
+      </div>
+      <div class="form-group"><label>Assigned To</label><input type="text" id="f-assigned" placeholder="Name or team..." /></div>
+      <div class="form-group full"><label>Description</label><textarea id="f-desc" placeholder="Enter description..."></textarea></div>
+      <div class="form-group"><label>Due Date</label><input type="date" id="f-due" /></div>
+      <div class="form-group"><label>Tags (comma separated)</label><input type="text" id="f-tags" placeholder="tag1, tag2..." /></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveRecord()"><i class="ti ti-check"></i><span id="save-btn-text">Create Record</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- VIEW RECORD MODAL -->
+<div class="modal-overlay" id="view-modal-overlay">
+  <div class="modal modal-wide">
+    <div class="modal-header">
+      <div class="modal-title" id="view-modal-title">Record Details</div>
+      <button class="modal-close" onclick="closeViewModal()"><i class="ti ti-x"></i></button>
+    </div>
+    <div id="view-modal-content"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeViewModal()">Close</button>
+      <button class="btn btn-primary" id="view-edit-btn"><i class="ti ti-edit"></i>Edit Record</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADD USER MODAL -->
+<div class="modal-overlay" id="user-modal-overlay">
+  <div class="modal modal-narrow">
+    <div class="modal-header">
+      <div class="modal-title">Add User</div>
+      <button class="modal-close" onclick="document.getElementById('user-modal-overlay').classList.remove('open')"><i class="ti ti-x"></i></button>
+    </div>
+    <div class="stack stack-sm">
+      <div class="form-group"><label>Full Name *</label><input type="text" id="nu-name" placeholder="John Smith" /></div>
+      <div class="form-group"><label>Role</label><select id="nu-role"><option>Administrator</option><option>Manager</option><option>Analyst</option><option>Viewer</option></select></div>
+      <div class="form-group"><label>Email</label><input type="email" id="nu-email" placeholder="user@company.com" /></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="document.getElementById('user-modal-overlay').classList.remove('open')">Cancel</button>
+      <button class="btn btn-primary" onclick="addUser()"><i class="ti ti-user-plus"></i>Add User</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST CONTAINER -->
+<div class="toast-container" id="toast-container"></div>
+{% endblock %}
+
