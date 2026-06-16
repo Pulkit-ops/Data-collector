@@ -45,6 +45,10 @@
       <div class="breadcrumb" id="topbar-breadcrumb">Overview of all data</div>
     </div>
     <div class="topbar-actions">
+      <button class="theme-toggle" id="theme-toggle" type="button" onclick="toggleTheme()" aria-label="Switch to dark mode" title="Switch theme">
+        <i class="ti ti-sun theme-icon-light" aria-hidden="true"></i>
+        <i class="ti ti-moon theme-icon-dark" aria-hidden="true"></i>
+      </button>
       <div class="realtime-badge"><span class="status-dot"></span>Live Sync Active</div>
       <div class="search-box"><i class="ti ti-search search-icon"></i><input type="text" placeholder="Search records..." id="global-search" oninput="globalSearch(this.value)" /></div>
       <button class="btn btn-primary" onclick="openModal('add')"><i class="ti ti-plus"></i>New Record</button>
@@ -110,7 +114,7 @@
     <div class="page" id="page-records">
       <div class="card flush-card">
         <div class="card-header compact-card-header">
-          <div><div class="card-title">All Records</div><div class="card-sub" id="records-count-label">Loading...</div></div>
+          <div><div class="card-title">All Records</div><div class="card-sub loading-text" id="records-count-label">Loading...</div></div>
           <div class="toolbar-row">
             <select class="control-sm" id="filter-status" onchange="renderRecordsTable()">
               <option value="">All Status</option>

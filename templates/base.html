@@ -4,6 +4,17 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>{% block title %}DataTrack Pro â€” Centralized Database System{% endblock %}</title>
+<script>
+  (function () {
+    try {
+      var stored = localStorage.getItem('dtp_theme');
+      var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.dataset.theme = stored || (prefersDark ? 'dark' : 'light');
+    } catch (e) {
+      document.documentElement.dataset.theme = 'light';
+    }
+  })();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" />
@@ -11,7 +22,7 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}" />
 {% block head %}{% endblock %}
 </head>
-<body>
+<body class="app-loading">
 {% block content %}{% endblock %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="{{ url_for('static', filename='js/main.js') }}"></script>

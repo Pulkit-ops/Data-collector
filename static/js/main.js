@@ -8,6 +8,71 @@ const DB = {
 };
 
 // ============================================================
+// THEME
+// ============================================================
+const THEME_KEY = 'dtp_theme';
+
+function preferredTheme() {
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+function getTheme() {
+  try {
+    return localStorage.getItem(THEME_KEY) || preferredTheme();
+  } catch(e) {
+    return preferredTheme();
+  }
+}
+
+function setTheme(theme, persist=true) {
+  const nextTheme = theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = nextTheme;
+  if(persist) localStorage.setItem(THEME_KEY, nextTheme);
+  updateThemeToggle(nextTheme);
+  refreshChartsForTheme();
+}
+
+function toggleTheme() {
+  setTheme((document.documentElement.dataset.theme || getTheme()) === 'dark' ? 'light' : 'dark');
+}
+
+function updateThemeToggle(theme) {
+  const btn = document.getElementById('theme-toggle');
+  if(!btn) return;
+  const dark = theme === 'dark';
+  btn.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
+  btn.setAttribute('title', dark ? 'Switch to light mode' : 'Switch to dark mode');
+}
+
+function themeVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function hexToRgb(hex) {
+  const clean = hex.replace('#', '').trim();
+  const value = clean.length === 3 ? clean.split('').map(ch=>ch+ch).join('') : clean;
+  const num = parseInt(value, 16);
+  return { r:(num >> 16) & 255, g:(num >> 8) & 255, b:num & 255 };
+}
+
+function alphaColor(name, alpha) {
+  const value = themeVar(name);
+  if(value.startsWith('#')) {
+    const rgb = hexToRgb(value);
+    return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
+  }
+  return value;
+}
+
+function refreshChartsForTheme() {
+  if(!window.Chart) return;
+  if(activityChartObj) renderActivityChart();
+  if(statusChartObj) renderStatusChart();
+  if(deptChartObj) renderDeptChart();
+  if(trendChartObj) renderTrendChart();
+}
+
+// ============================================================
 // STATE
 // ============================================================
 let records = DB.get('records', []);
@@ -243,6 +308,8 @@ function renderUserActivity() {
 function renderActivityChart() {
   const ctx=document.getElementById('activityChart').getContext('2d');
   if(activityChartObj){ activityChartObj.destroy(); }
+  const tickColor = themeVar('--chart-tick');
+  const gridColor = themeVar('--chart-grid');
   const days=[]; const added=[]; const updated=[];
   for(let i=6;i>=0;i--){
     const d=new Date(); d.setDate(d.getDate()-i);
@@ -253,9 +320,9 @@ function renderActivityChart() {
     updated.push(records.filter(r=>r.updatedAt&&new Date(r.updatedAt).toDateString()===ds&&new Date(r.updatedAt)>new Date(r.createdAt)).length);
   }
   activityChartObj=new Chart(ctx,{type:'bar',data:{labels:days,datasets:[
-    {label:'Added',data:added,backgroundColor:'rgba(99,102,241,0.7)',borderRadius:4},
-    {label:'Updated',data:updated,backgroundColor:'rgba(56,189,248,0.5)',borderRadius:4}
-  ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#5c6180',font:{size:11}},grid:{color:'rgba(255,255,255,0.04)'}},y:{ticks:{color:'#5c6180',font:{size:11},stepSize:1},grid:{color:'rgba(255,255,255,0.04)'}}}}});
+    {label:'Added',data:added,backgroundColor:alphaColor('--accent',0.7),borderRadius:4},
+    {label:'Updated',data:updated,backgroundColor:alphaColor('--info',0.5),borderRadius:4}
+  ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:tickColor,font:{size:11}},grid:{color:gridColor}},y:{ticks:{color:tickColor,font:{size:11},stepSize:1},grid:{color:gridColor}}}}});
 }
 
 function renderStatusChart() {
@@ -265,7 +332,7 @@ function renderStatusChart() {
   records.forEach(r=>{ if(s[r.status]!==undefined) s[r.status]++; });
   statusChartObj=new Chart(ctx,{type:'doughnut',data:{
     labels:['Pending','In Progress','Completed','Cancelled'],
-    datasets:[{data:Object.values(s),backgroundColor:['#f59e0b','#38bdf8','#22c55e','#ef4444'],borderWidth:0,hoverOffset:4}]
+    datasets:[{data:Object.values(s),backgroundColor:[themeVar('--warning'),themeVar('--info'),themeVar('--success'),themeVar('--danger')],borderWidth:0,hoverOffset:4}]
   },options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},cutout:'65%'}});
 }
 
@@ -282,7 +349,9 @@ function renderRecordsTable() {
     const q=currentSearchQuery.toLowerCase();
     data=data.filter(r=>r.title?.toLowerCase().includes(q)||r.department?.toLowerCase().includes(q)||r.createdBy?.toLowerCase().includes(q)||r.description?.toLowerCase().includes(q));
   }
-  document.getElementById('records-count-label').textContent=`${data.length} record${data.length!==1?'s':''} found`;
+  const countLabel = document.getElementById('records-count-label');
+  countLabel.classList.remove('loading-text');
+  countLabel.textContent=`${data.length} record${data.length!==1?'s':''} found`;
   const tbody=document.getElementById('records-tbody');
   if(!data.length){ tbody.innerHTML=`<tr><td colspan="9"><div class="empty-state"><i class="ti ti-inbox"></i>No records found</div></td></tr>`; return; }
   tbody.innerHTML=data.map(r=>`
@@ -404,25 +473,30 @@ function generateReport() {
 function renderDeptChart() {
   const ctx=document.getElementById('deptChart').getContext('2d');
   if(deptChartObj) deptChartObj.destroy();
+  const tickColor = themeVar('--chart-tick');
+  const tickStrong = themeVar('--chart-tick-strong');
+  const gridColor = themeVar('--chart-grid');
   const depts={};
   records.forEach(r=>{ depts[r.department]=(depts[r.department]||0)+1; });
   const labels=Object.keys(depts), data=Object.values(depts);
-  deptChartObj=new Chart(ctx,{type:'bar',data:{labels,datasets:[{data,backgroundColor:'rgba(99,102,241,0.7)',borderRadius:4}]},
+  deptChartObj=new Chart(ctx,{type:'bar',data:{labels,datasets:[{data,backgroundColor:alphaColor('--accent',0.7),borderRadius:4}]},
     options:{responsive:true,maintainAspectRatio:false,indexAxis:'y',plugins:{legend:{display:false}},
-    scales:{x:{ticks:{color:'#5c6180',font:{size:10},stepSize:1},grid:{color:'rgba(255,255,255,0.04)'}},y:{ticks:{color:'#9aa0b8',font:{size:10}},grid:{display:false}}}}});
+    scales:{x:{ticks:{color:tickColor,font:{size:10},stepSize:1},grid:{color:gridColor}},y:{ticks:{color:tickStrong,font:{size:10}},grid:{display:false}}}}});
 }
 
 function renderTrendChart() {
   const ctx=document.getElementById('trendChart').getContext('2d');
   if(trendChartObj) trendChartObj.destroy();
+  const tickColor = themeVar('--chart-tick');
+  const gridColor = themeVar('--chart-grid');
   const months=[]; const data=[];
   for(let i=5;i>=0;i--){
     const d=new Date(); d.setMonth(d.getMonth()-i);
     months.push(d.toLocaleDateString('en-IN',{month:'short'}));
     data.push(records.filter(r=>{ const rd=new Date(r.createdAt); return rd.getMonth()===d.getMonth()&&rd.getFullYear()===d.getFullYear(); }).length);
   }
-  trendChartObj=new Chart(ctx,{type:'line',data:{labels:months,datasets:[{label:'Records',data,borderColor:'#6366f1',backgroundColor:'rgba(99,102,241,0.1)',tension:0.4,fill:true,pointBackgroundColor:'#6366f1',pointRadius:4}]},
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:'#5c6180'},grid:{color:'rgba(255,255,255,0.04)'}},y:{ticks:{color:'#5c6180',stepSize:1},grid:{color:'rgba(255,255,255,0.04)'}}}}});
+  trendChartObj=new Chart(ctx,{type:'line',data:{labels:months,datasets:[{label:'Records',data,borderColor:themeVar('--accent'),backgroundColor:alphaColor('--accent',0.1),tension:0.4,fill:true,pointBackgroundColor:themeVar('--accent'),pointRadius:4}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{color:tickColor},grid:{color:gridColor}},y:{ticks:{color:tickColor,stepSize:1},grid:{color:gridColor}}}}});
 }
 
 // ============================================================
@@ -637,13 +711,21 @@ function clearAllData() {
 // INIT
 // ============================================================
 document.addEventListener('DOMContentLoaded',()=>{
+  setTheme(getTheme(), false);
   document.getElementById('sidebar-username').textContent=settings.username;
   document.getElementById('sidebar-role').textContent=settings.role;
   document.getElementById('sidebar-avatar').textContent=settings.username.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase();
   document.getElementById('nav-count').textContent=records.length;
   renderDashboard();
   autoBackup();
+  document.body.classList.remove('app-loading');
 });
+
+if(window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e=>{
+    if(!localStorage.getItem(THEME_KEY)) setTheme(e.matches ? 'dark' : 'light', false);
+  });
+}
 
 // Keyboard shortcuts
 document.addEventListener('keydown',e=>{
