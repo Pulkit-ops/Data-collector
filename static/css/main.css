@@ -651,6 +651,13 @@ label {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
 .two-col {
   grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr);
   margin-bottom: 18px;
@@ -690,6 +697,24 @@ label {
   padding: 18px;
   position: relative;
   overflow: hidden;
+}
+
+.stat-card-accent { --stat-tone: var(--accent); --stat-tone-bg: var(--accent-bg); }
+.stat-card-success { --stat-tone: var(--success); --stat-tone-bg: var(--success-bg); }
+.stat-card-warning { --stat-tone: var(--warning); --stat-tone-bg: var(--warning-bg); }
+.stat-card-info { --stat-tone: var(--info); --stat-tone-bg: var(--info-bg); }
+
+.stat-icon {
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--stat-tone-bg, var(--accent-bg));
+  color: var(--stat-tone, var(--accent));
+  font-size: 20px;
 }
 
 .stat-card::after {
@@ -743,6 +768,13 @@ label {
 
 .stat-change.down {
   color: var(--danger);
+}
+
+.stat-compare {
+  margin-top: 6px;
+  color: var(--text3);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .card-header {
@@ -827,7 +859,9 @@ label {
 .table-wrap {
   width: 100%;
   overflow-x: auto;
+  max-height: min(62vh, 620px);
   border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
 }
 
 table {
@@ -837,8 +871,12 @@ table {
 }
 
 th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   padding: 11px 12px;
   border-bottom: 1px solid var(--border);
+  background: var(--surface-strong);
   color: var(--text3);
   font-size: 11px;
   font-weight: 800;
@@ -846,6 +884,31 @@ th {
   text-align: left;
   text-transform: uppercase;
   white-space: nowrap;
+}
+
+.th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  text-transform: inherit;
+}
+
+.th-sort i {
+  color: var(--text3);
+  font-size: 13px;
+}
+
+.th-sort.active {
+  color: var(--accent2);
 }
 
 td {
@@ -873,9 +936,77 @@ tbody tr:hover {
   transform: translateY(-1px);
 }
 
+.row-selected td {
+  background: var(--accent-bg);
+  color: var(--text1);
+}
+
 .td-main {
   color: var(--text1);
   font-weight: 700;
+}
+
+.table-search {
+  width: 210px;
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.table-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 14px;
+}
+
+.table-meta {
+  color: var(--text3);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pagination-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.page-pill {
+  min-width: 58px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg3);
+  color: var(--text2);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.loading-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 42px 20px;
+  color: var(--text3);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: softSpin 0.8s linear infinite;
 }
 
 /* Badges and details */
@@ -1238,7 +1369,8 @@ tbody tr:hover {
   }
 
   .two-col,
-  .equal-col {
+  .equal-col,
+  .analytics-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1317,6 +1449,11 @@ tbody tr:hover {
   .toolbar-row {
     flex-wrap: wrap;
   }
+
+  .table-search {
+    flex: 1 1 220px;
+    width: auto;
+  }
 }
 
 @media (max-width: 620px) {
@@ -1391,5 +1528,14 @@ tbody tr:hover {
 
   .toast {
     min-width: 0;
+  }
+
+  .table-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pagination-controls {
+    justify-content: space-between;
   }
 }

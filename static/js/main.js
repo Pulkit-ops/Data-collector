@@ -70,6 +70,10 @@ function refreshChartsForTheme() {
   if(statusChartObj) renderStatusChart();
   if(deptChartObj) renderDeptChart();
   if(trendChartObj) renderTrendChart();
+  if(dailyRecordsChartObj) renderDailyRecordsChart();
+  if(weeklyTrendChartObj) renderWeeklyTrendChart();
+  if(monthlyGrowthChartObj) renderMonthlyGrowthChart();
+  if(categoryDistributionChartObj) renderCategoryDistributionChart();
 }
 
 // ============================================================
@@ -86,7 +90,17 @@ let users = DB.get('users', [
 let settings = DB.getObj('settings', { username:'Admin User', role:'Administrator', backup:'Daily', defaultStatus:'pending' });
 let dailyTab = 'today';
 let currentSearchQuery = '';
+let isServerBacked = true;
+let selectedRecordId = null;
+let recordsLoading = true;
 let activityChartObj = null, statusChartObj = null, deptChartObj = null, trendChartObj = null;
+let dailyRecordsChartObj = null, weeklyTrendChartObj = null, monthlyGrowthChartObj = null, categoryDistributionChartObj = null;
+const tableState = {
+  records: { page:1, pageSize:10, sortKey:'updatedAt', sortDir:'desc', query:'', filters:{ status:'', priority:'', department:'' } },
+  daily: { page:1, pageSize:10, sortKey:'createdAt', sortDir:'desc', query:'', filters:{ status:'', priority:'' } },
+  users: { page:1, pageSize:10, sortKey:'name', sortDir:'asc', query:'', filters:{ role:'', status:'' } },
+  backups: { page:1, pageSize:10, sortKey:'createdAt', sortDir:'desc', query:'', filters:{} }
+};
 
 // ============================================================
 // UTILS
@@ -102,6 +116,110 @@ function isThisMonth(iso) { const d=new Date(iso),n=new Date(); return d.getMont
 function save() { DB.set('records',records); DB.set('audit',auditLog); DB.set('backups',backups); DB.set('users',users); DB.set('settings',settings); }
 function currentUser() { return settings.username || 'Admin User'; }
 
+function normalizeRecord(r={}) {
+  return {
+    ...r,
+    assignedTo: r.assignedTo ?? r.assigned_to ?? '',
+    dueDate: r.dueDate ?? r.due_date ?? '',
+    createdAt: r.createdAt ?? r.created_at ?? '',
+    createdBy: r.createdBy ?? r.created_by ?? '',
+    updatedAt: r.updatedAt ?? r.updated_at ?? '',
+    updatedBy: r.updatedBy ?? r.updated_by ?? '',
+    tags: Array.isArray(r.tags) ? r.tags : []
+  };
+}
+
+function normalizeAudit(a={}) {
+  return {
+    ...a,
+    recordId: a.recordId ?? a.record_id ?? '',
+    recordTitle: a.recordTitle ?? a.record_title ?? '',
+    at: a.at ?? a.created_at ?? ''
+  };
+}
+
+function normalizeBackup(b={}) {
+  return {
+    ...b,
+    createdAt: b.createdAt ?? b.created_at ?? '',
+    recordCount: b.recordCount ?? b.record_count ?? 0,
+    size: b.size ?? 0
+  };
+}
+
+function recordPayload(data) {
+  return {
+    title: data.title,
+    department: data.department,
+    priority: data.priority,
+    status: data.status,
+    assigned_to: data.assignedTo,
+    description: data.description,
+    due_date: data.dueDate,
+    tags: data.tags,
+    created_by: currentUser(),
+    updated_by: currentUser()
+  };
+}
+
+async function api(path, options={}) {
+  const res = await fetch(path, {
+    headers: { 'Content-Type':'application/json', ...(options.headers || {}) },
+    ...options
+  });
+  if(!res.ok) {
+    let message = 'Request failed';
+    try { message = (await res.json()).error || message; } catch(e) {}
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+async function loadServerData() {
+  recordsLoading = true;
+  renderRecordsTable();
+  try {
+    const [recordRes, auditRes, backupRes, userRes, settingsRes] = await Promise.all([
+      api('/api/records'),
+      api('/api/audit'),
+      api('/api/backups'),
+      api('/api/users'),
+      api('/api/settings')
+    ]);
+    records = (recordRes.records || []).map(normalizeRecord);
+    auditLog = (auditRes.log || []).map(normalizeAudit);
+    backups = (backupRes.backups || []).map(normalizeBackup);
+    users = userRes.users || users;
+    settings = {
+      username: settingsRes.username || settings.username,
+      role: settingsRes.role || settings.role,
+      backup: settingsRes.backup_freq || settingsRes.backup || settings.backup,
+      defaultStatus: settingsRes.default_status || settingsRes.defaultStatus || settings.defaultStatus
+    };
+    isServerBacked = true;
+    save();
+  } catch(err) {
+    isServerBacked = false;
+    toast('Using local data because the API is unavailable','info');
+  } finally {
+    recordsLoading = false;
+    syncShell();
+    refreshCurrentPage();
+  }
+}
+
+function syncShell() {
+  document.getElementById('sidebar-username').textContent=settings.username;
+  document.getElementById('sidebar-role').textContent=settings.role;
+  document.getElementById('sidebar-avatar').textContent=settings.username.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase();
+  document.getElementById('nav-count').textContent=records.length;
+}
+
+function refreshCurrentPage() {
+  const active = document.querySelector('.page.active')?.id?.replace('page-','') || 'dashboard';
+  refreshPage(active);
+}
+
 const statusBadge = s => {
   const m = {completed:'success',pending:'warning','in-progress':'info',cancelled:'danger'};
   return `<span class="badge badge-${m[s]||'default'}">${s}</span>`;
@@ -110,6 +228,108 @@ const priorityBadge = p => {
   const m = {high:'danger',medium:'warning',low:'success'};
   return `<span class="badge badge-${m[p]||'default'}">${p}</span>`;
 };
+
+function escapeHtml(value='') {
+  return String(value).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[ch]));
+}
+
+function getValue(row, key) {
+  const val = row?.[key];
+  return val == null ? '' : val;
+}
+
+function compareRows(key, dir) {
+  return (a,b) => {
+    const av = getValue(a, key);
+    const bv = getValue(b, key);
+    const ad = Date.parse(av), bd = Date.parse(bv);
+    let result;
+    if(!Number.isNaN(ad) && !Number.isNaN(bd)) result = ad - bd;
+    else if(typeof av === 'number' && typeof bv === 'number') result = av - bv;
+    else result = String(av).localeCompare(String(bv), undefined, { numeric:true, sensitivity:'base' });
+    return dir === 'asc' ? result : -result;
+  };
+}
+
+function setTableQuery(name, value) {
+  tableState[name].query = value.toLowerCase();
+  tableState[name].page = 1;
+  if(name === 'records') renderRecordsTable();
+  if(name === 'daily') renderDaily();
+  if(name === 'users') renderUsers();
+  if(name === 'backups') renderBackup();
+}
+
+function setTableSort(name, key) {
+  const state = tableState[name];
+  if(state.sortKey === key) state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+  else { state.sortKey = key; state.sortDir = 'asc'; }
+  if(name === 'records') renderRecordsTable();
+  if(name === 'daily') renderDaily();
+  if(name === 'users') renderUsers();
+  if(name === 'backups') renderBackup();
+}
+
+function setTablePage(name, page) {
+  const state = tableState[name];
+  state.page = Math.max(1, page);
+  if(name === 'records') renderRecordsTable();
+  if(name === 'daily') renderDaily();
+  if(name === 'users') renderUsers();
+  if(name === 'backups') renderBackup();
+}
+
+function renderTableHead(theadId, name, columns) {
+  const state = tableState[name];
+  const el = document.getElementById(theadId);
+  if(!el) return;
+  el.innerHTML = `<tr>${columns.map(col => {
+    if(!col.sortKey) return `<th>${col.label}</th>`;
+    const active = state.sortKey === col.sortKey;
+    const icon = active ? (state.sortDir === 'asc' ? 'ti-chevron-up' : 'ti-chevron-down') : 'ti-selector';
+    return `<th><button class="th-sort ${active ? 'active' : ''}" onclick="setTableSort('${name}','${col.sortKey}')">${col.label}<i class="ti ${icon}"></i></button></th>`;
+  }).join('')}</tr>`;
+}
+
+function paginateData(name, data) {
+  const state = tableState[name];
+  const totalPages = Math.max(1, Math.ceil(data.length / state.pageSize));
+  if(state.page > totalPages) state.page = totalPages;
+  const start = (state.page - 1) * state.pageSize;
+  return { rows: data.slice(start, start + state.pageSize), totalPages, start };
+}
+
+function renderPagination(name, total, totalPages) {
+  const el = document.getElementById(`${name}-pagination`);
+  if(!el) return;
+  const state = tableState[name];
+  const from = total ? ((state.page - 1) * state.pageSize) + 1 : 0;
+  const to = Math.min(total, state.page * state.pageSize);
+  el.innerHTML = `
+    <div class="table-meta">${total ? `Showing ${from}-${to} of ${total}` : 'No rows to show'}</div>
+    <div class="pagination-controls">
+      <button class="icon-btn" ${state.page===1?'disabled':''} onclick="setTablePage('${name}', ${state.page-1})" title="Previous page"><i class="ti ti-chevron-left"></i></button>
+      <span class="page-pill">${state.page} / ${totalPages}</span>
+      <button class="icon-btn" ${state.page===totalPages?'disabled':''} onclick="setTablePage('${name}', ${state.page+1})" title="Next page"><i class="ti ti-chevron-right"></i></button>
+    </div>`;
+}
+
+function rowLoading(colspan, label='Loading data...') {
+  return `<tr><td colspan="${colspan}"><div class="loading-state"><span class="spinner"></span>${label}</div></td></tr>`;
+}
+
+function rowEmpty(colspan, icon, label) {
+  return `<tr><td colspan="${colspan}"><div class="empty-state"><i class="ti ${icon}"></i>${label}</div></td></tr>`;
+}
+
+function populateDepartmentFilter() {
+  const select = document.getElementById('filter-department');
+  if(!select) return;
+  const current = select.value;
+  const depts = [...new Set(records.map(r => r.department).filter(Boolean))].sort();
+  select.innerHTML = '<option value="">All Departments</option>' + depts.map(d=>`<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
+  select.value = depts.includes(current) ? current : '';
+}
 
 // ============================================================
 // TOAST
@@ -201,7 +421,7 @@ function openModal(mode, id=null) {
 function closeModal() { document.getElementById('modal-overlay').classList.remove('open'); }
 function closeViewModal() { document.getElementById('view-modal-overlay').classList.remove('open'); }
 
-function saveRecord() {
+async function saveRecord() {
   const title = document.getElementById('f-title').value.trim();
   if(!title) { toast('Record title is required','error'); return; }
   const editId = document.getElementById('edit-id').value;
@@ -215,18 +435,36 @@ function saveRecord() {
     description:document.getElementById('f-desc').value,
     dueDate:document.getElementById('f-due').value, tags
   };
-  if(editId) {
-    const idx=records.findIndex(r=>r.id===editId);
-    if(idx===-1) return;
-    const old={...records[idx]};
-    records[idx]={...records[idx],...data,updatedAt:now,updatedBy:currentUser()};
-    addAudit('update',editId,records[idx].title,'Record updated',old,records[idx]);
-    toast('Record updated successfully');
-  } else {
-    const rec={ id:genId(), ...data, createdAt:now, createdBy:currentUser(), updatedAt:now, updatedBy:currentUser(), changes:[] };
-    records.unshift(rec);
-    addAudit('create',rec.id,rec.title,'Record created',null,rec);
-    toast('Record created successfully');
+  try {
+    if(isServerBacked) {
+      if(editId) {
+        const res = await api(`/api/records/${editId}`, { method:'PUT', body:JSON.stringify(recordPayload(data)) });
+        const updated = normalizeRecord(res.record);
+        records = records.map(r => r.id === editId ? updated : r);
+        toast('Record updated successfully');
+      } else {
+        const res = await api('/api/records', { method:'POST', body:JSON.stringify(recordPayload(data)) });
+        records.unshift(normalizeRecord(res.record));
+        toast('Record created successfully');
+      }
+      const auditRes = await api('/api/audit');
+      auditLog = (auditRes.log || []).map(normalizeAudit);
+    } else if(editId) {
+      const idx=records.findIndex(r=>r.id===editId);
+      if(idx===-1) return;
+      const old={...records[idx]};
+      records[idx]={...records[idx],...data,updatedAt:now,updatedBy:currentUser()};
+      addAudit('update',editId,records[idx].title,'Record updated',old,records[idx]);
+      toast('Record updated successfully');
+    } else {
+      const rec={ id:genId(), ...data, createdAt:now, createdBy:currentUser(), updatedAt:now, updatedBy:currentUser(), changes:[] };
+      records.unshift(rec);
+      addAudit('create',rec.id,rec.title,'Record created',null,rec);
+      toast('Record created successfully');
+    }
+  } catch(err) {
+    toast(err.message || 'Could not save record','error');
+    return;
   }
   save();
   closeModal();
@@ -235,11 +473,22 @@ function saveRecord() {
   broadcastUpdate();
 }
 
-function deleteRecord(id) {
+async function deleteRecord(id) {
   if(!confirm('Delete this record permanently?')) return;
   const r=records.find(x=>x.id===id);
+  try {
+    if(isServerBacked) {
+      await api(`/api/records/${id}`, { method:'DELETE' });
+      const auditRes = await api('/api/audit');
+      auditLog = (auditRes.log || []).map(normalizeAudit);
+    } else {
+      addAudit('delete',id,r?.title||id,'Record deleted',r,null);
+    }
+  } catch(err) {
+    toast(err.message || 'Could not delete record','error');
+    return;
+  }
   records=records.filter(x=>x.id!==id);
-  addAudit('delete',id,r?.title||id,'Record deleted',r,null);
   save();
   renderDashboard(); renderRecordsTable();
   document.getElementById('nav-count').textContent=records.length;
@@ -263,15 +512,27 @@ function renderDashboard() {
   const total=records.length;
   const completed=records.filter(r=>r.status==='completed').length;
   const pending=records.filter(r=>r.status==='pending').length;
-  const todayUpdated=records.filter(r=>isToday(r.updatedAt)).length;
+  const todayAdded=records.filter(r=>isToday(r.createdAt)).length;
+  const yesterdayAdded=records.filter(r=>isYesterday(r.createdAt)).length;
+  const todayUpdated=records.filter(r=>isToday(r.updatedAt)&&!isToday(r.createdAt)).length;
+  const inProgress=records.filter(r=>r.status==='in-progress').length;
   document.getElementById('stat-total').textContent=total;
   document.getElementById('stat-completed').textContent=completed;
   document.getElementById('stat-pending').textContent=pending;
   document.getElementById('stat-updated').textContent=todayUpdated;
-  document.getElementById('stat-total-change').innerHTML=`<i class="ti ti-trending-up"></i><span>${records.filter(r=>isToday(r.createdAt)).length} added today</span>`;
+  const delta = todayAdded - yesterdayAdded;
+  document.getElementById('stat-total-change').className = `stat-change ${delta >= 0 ? 'up' : 'down'}`;
+  document.getElementById('stat-total-change').innerHTML=`<i class="ti ${delta >= 0 ? 'ti-trending-up' : 'ti-trending-down'}"></i><span>${todayAdded} added today</span>`;
+  document.getElementById('stat-total-compare').textContent=`${Math.abs(delta)} ${delta >= 0 ? 'more' : 'fewer'} than yesterday`;
   document.getElementById('stat-completed-pct').innerHTML=`<span>${total?Math.round(completed/total*100):0}% completion rate</span>`;
+  document.getElementById('stat-completed-compare').textContent=`${completed} of ${total} records closed`;
+  document.getElementById('stat-pending-sub').innerHTML=`<i class="ti ti-hourglass-high"></i><span>${inProgress} in progress</span>`;
+  document.getElementById('stat-pending-compare').textContent=`${pending + inProgress} active records need attention`;
+  document.getElementById('stat-updated-change').innerHTML=`<i class="ti ti-refresh"></i><span>${todayUpdated} changed today</span>`;
+  document.getElementById('stat-updated-compare').textContent=`Real-time ${isServerBacked ? 'API' : 'local'} tracking`;
   document.getElementById('nav-count').textContent=total;
-  renderRecentRecords(); renderUserActivity(); renderActivityChart(); renderStatusChart();
+  renderRecentRecords(); renderUserActivity();
+  renderDailyRecordsChart(); renderWeeklyTrendChart(); renderMonthlyGrowthChart(); renderCategoryDistributionChart();
 }
 
 function renderRecentRecords() {
@@ -303,6 +564,121 @@ function renderUserActivity() {
       </div>
       <div class="progress-bar"><div class="progress-fill" style="width:${Math.round(count/max*100)}%;background:var(--accent)"></div></div>
     </div>`).join('');
+}
+
+function chartBaseOptions(extra={}) {
+  return {
+    responsive:true,
+    maintainAspectRatio:false,
+    animation:{ duration:750, easing:'easeOutQuart' },
+    plugins:{
+      legend:{ labels:{ color:themeVar('--chart-tick-strong'), boxWidth:10, usePointStyle:true } },
+      tooltip:{ backgroundColor:themeVar('--bg2'), titleColor:themeVar('--text1'), bodyColor:themeVar('--text2'), borderColor:themeVar('--border2'), borderWidth:1 }
+    },
+    ...extra
+  };
+}
+
+function lastNDays(n) {
+  const out = [];
+  for(let i=n-1;i>=0;i--) {
+    const d = new Date();
+    d.setHours(0,0,0,0);
+    d.setDate(d.getDate()-i);
+    out.push(d);
+  }
+  return out;
+}
+
+function sameDay(a, b) {
+  const d = new Date(a);
+  return d.toDateString() === b.toDateString();
+}
+
+function renderDailyRecordsChart() {
+  const canvas = document.getElementById('dailyRecordsChart');
+  if(!canvas || !window.Chart) return;
+  const ctx=canvas.getContext('2d');
+  if(dailyRecordsChartObj) dailyRecordsChartObj.destroy();
+  const days = lastNDays(7);
+  dailyRecordsChartObj = new Chart(ctx, {
+    type:'bar',
+    data:{
+      labels:days.map(d=>d.toLocaleDateString('en-IN',{weekday:'short',day:'numeric'})),
+      datasets:[
+        { label:'Created', data:days.map(d=>records.filter(r=>sameDay(r.createdAt,d)).length), backgroundColor:alphaColor('--accent',0.78), borderRadius:6 },
+        { label:'Updated', data:days.map(d=>records.filter(r=>r.updatedAt && !sameDay(r.createdAt,d) && sameDay(r.updatedAt,d)).length), backgroundColor:alphaColor('--info',0.62), borderRadius:6 }
+      ]
+    },
+    options: chartBaseOptions({
+      scales:{
+        x:{ ticks:{ color:themeVar('--chart-tick'), font:{ size:11 } }, grid:{ display:false } },
+        y:{ beginAtZero:true, ticks:{ color:themeVar('--chart-tick'), precision:0 }, grid:{ color:themeVar('--chart-grid') } }
+      }
+    })
+  });
+}
+
+function renderWeeklyTrendChart() {
+  const canvas = document.getElementById('weeklyTrendChart');
+  if(!canvas || !window.Chart) return;
+  const ctx=canvas.getContext('2d');
+  if(weeklyTrendChartObj) weeklyTrendChartObj.destroy();
+  const days = lastNDays(7);
+  const created = days.map(d=>records.filter(r=>sameDay(r.createdAt,d)).length);
+  const cumulative = created.reduce((acc, count, idx)=>{ acc.push((acc[idx-1]||0)+count); return acc; }, []);
+  weeklyTrendChartObj = new Chart(ctx, {
+    type:'line',
+    data:{ labels:days.map(d=>d.toLocaleDateString('en-IN',{weekday:'short'})), datasets:[
+      { label:'Daily', data:created, borderColor:themeVar('--accent'), backgroundColor:alphaColor('--accent',0.14), tension:0.38, fill:true, pointRadius:4, pointBackgroundColor:themeVar('--accent') },
+      { label:'Cumulative', data:cumulative, borderColor:themeVar('--success'), backgroundColor:alphaColor('--success',0.08), tension:0.38, borderDash:[5,5], pointRadius:3 }
+    ]},
+    options: chartBaseOptions({
+      scales:{
+        x:{ ticks:{ color:themeVar('--chart-tick') }, grid:{ color:themeVar('--chart-grid') } },
+        y:{ beginAtZero:true, ticks:{ color:themeVar('--chart-tick'), precision:0 }, grid:{ color:themeVar('--chart-grid') } }
+      }
+    })
+  });
+}
+
+function renderMonthlyGrowthChart() {
+  const canvas = document.getElementById('monthlyGrowthChart');
+  if(!canvas || !window.Chart) return;
+  const ctx=canvas.getContext('2d');
+  if(monthlyGrowthChartObj) monthlyGrowthChartObj.destroy();
+  const months=[]; const data=[];
+  for(let i=5;i>=0;i--){
+    const d=new Date(); d.setDate(1); d.setMonth(d.getMonth()-i);
+    months.push(d.toLocaleDateString('en-IN',{month:'short'}));
+    data.push(records.filter(r=>{ const rd=new Date(r.createdAt); return rd.getMonth()===d.getMonth()&&rd.getFullYear()===d.getFullYear(); }).length);
+  }
+  monthlyGrowthChartObj = new Chart(ctx, {
+    type:'line',
+    data:{ labels:months, datasets:[{ label:'Records', data, borderColor:themeVar('--purple'), backgroundColor:alphaColor('--purple',0.13), fill:true, tension:0.42, pointRadius:4, pointBackgroundColor:themeVar('--purple') }] },
+    options: chartBaseOptions({
+      plugins:{ ...chartBaseOptions().plugins, legend:{ display:false } },
+      scales:{
+        x:{ ticks:{ color:themeVar('--chart-tick') }, grid:{ display:false } },
+        y:{ beginAtZero:true, ticks:{ color:themeVar('--chart-tick'), precision:0 }, grid:{ color:themeVar('--chart-grid') } }
+      }
+    })
+  });
+}
+
+function renderCategoryDistributionChart() {
+  const canvas = document.getElementById('categoryDistributionChart');
+  if(!canvas || !window.Chart) return;
+  const ctx=canvas.getContext('2d');
+  if(categoryDistributionChartObj) categoryDistributionChartObj.destroy();
+  const counts={};
+  records.forEach(r=>{ counts[r.department || 'Other']=(counts[r.department || 'Other']||0)+1; });
+  const labels=Object.keys(counts);
+  categoryDistributionChartObj = new Chart(ctx, {
+    type:'doughnut',
+    data:{ labels, datasets:[{ data:Object.values(counts), backgroundColor:[themeVar('--accent'),themeVar('--success'),themeVar('--warning'),themeVar('--info'),themeVar('--purple'),themeVar('--danger'),alphaColor('--accent',0.45),alphaColor('--success',0.45)], borderWidth:0, hoverOffset:8 }] },
+    options: chartBaseOptions({ cutout:'62%', plugins:{ ...chartBaseOptions().plugins, legend:{ position:'bottom', labels:{ color:themeVar('--chart-tick-strong'), boxWidth:9, usePointStyle:true } } } })
+  });
 }
 
 function renderActivityChart() {
@@ -340,38 +716,57 @@ function renderStatusChart() {
 // RECORDS TABLE
 // ============================================================
 function renderRecordsTable() {
+  populateDepartmentFilter();
+  renderTableHead('records-thead','records',[
+    {label:'ID',sortKey:'id'},{label:'Title',sortKey:'title'},{label:'Department',sortKey:'department'},
+    {label:'Priority',sortKey:'priority'},{label:'Status',sortKey:'status'},{label:'Created By',sortKey:'createdBy'},
+    {label:'Created',sortKey:'createdAt'},{label:'Last Updated',sortKey:'updatedAt'},{label:'Actions'}
+  ]);
   const statusFilter=document.getElementById('filter-status').value;
   const priorityFilter=document.getElementById('filter-priority').value;
+  const deptFilter=document.getElementById('filter-department')?.value || '';
+  tableState.records.filters = { status:statusFilter, priority:priorityFilter, department:deptFilter };
   let data=records;
   if(statusFilter) data=data.filter(r=>r.status===statusFilter);
   if(priorityFilter) data=data.filter(r=>r.priority===priorityFilter);
-  if(currentSearchQuery) {
-    const q=currentSearchQuery.toLowerCase();
+  if(deptFilter) data=data.filter(r=>r.department===deptFilter);
+  const tableQuery = tableState.records.query || currentSearchQuery.toLowerCase();
+  if(tableQuery) {
+    const q=tableQuery.toLowerCase();
     data=data.filter(r=>r.title?.toLowerCase().includes(q)||r.department?.toLowerCase().includes(q)||r.createdBy?.toLowerCase().includes(q)||r.description?.toLowerCase().includes(q));
   }
   const countLabel = document.getElementById('records-count-label');
   countLabel.classList.remove('loading-text');
   countLabel.textContent=`${data.length} record${data.length!==1?'s':''} found`;
   const tbody=document.getElementById('records-tbody');
-  if(!data.length){ tbody.innerHTML=`<tr><td colspan="9"><div class="empty-state"><i class="ti ti-inbox"></i>No records found</div></td></tr>`; return; }
-  tbody.innerHTML=data.map(r=>`
-    <tr>
+  if(recordsLoading){ tbody.innerHTML=rowLoading(9); renderPagination('records',0,1); return; }
+  if(!data.length){ tbody.innerHTML=rowEmpty(9,'ti-inbox','No records found'); renderPagination('records',0,1); return; }
+  data = data.sort(compareRows(tableState.records.sortKey, tableState.records.sortDir));
+  const paged = paginateData('records', data);
+  tbody.innerHTML=paged.rows.map(r=>`
+    <tr class="${selectedRecordId===r.id?'row-selected':''}" onclick="highlightRow('${r.id}')">
       <td><span style="font-family:monospace;font-size:11px;color:var(--text3)">${r.id}</span></td>
-      <td class="td-main">${r.title}</td>
-      <td><span class="badge badge-default">${r.department}</span></td>
+      <td class="td-main">${escapeHtml(r.title)}</td>
+      <td><span class="badge badge-default">${escapeHtml(r.department)}</span></td>
       <td>${priorityBadge(r.priority)}</td>
       <td>${statusBadge(r.status)}</td>
-      <td>${r.createdBy}</td>
+      <td>${escapeHtml(r.createdBy)}</td>
       <td style="white-space:nowrap">${fmtDate(r.createdAt)}</td>
       <td style="white-space:nowrap">${fmtDateTime(r.updatedAt)}</td>
       <td>
         <div class="flex-center">
-          <button class="icon-btn" onclick="viewRecord('${r.id}')" title="View"><i class="ti ti-eye"></i></button>
-          <button class="icon-btn" onclick="openModal('edit','${r.id}')" title="Edit"><i class="ti ti-edit"></i></button>
-          <button class="icon-btn" onclick="deleteRecord('${r.id}')" title="Delete" style="color:var(--danger)"><i class="ti ti-trash"></i></button>
+          <button class="icon-btn" onclick="event.stopPropagation(); viewRecord('${r.id}')" title="View"><i class="ti ti-eye"></i></button>
+          <button class="icon-btn" onclick="event.stopPropagation(); openModal('edit','${r.id}')" title="Edit"><i class="ti ti-edit"></i></button>
+          <button class="icon-btn" onclick="event.stopPropagation(); deleteRecord('${r.id}')" title="Delete" style="color:var(--danger)"><i class="ti ti-trash"></i></button>
         </div>
       </td>
     </tr>`).join('');
+  renderPagination('records', data.length, paged.totalPages);
+}
+
+function highlightRow(id) {
+  selectedRecordId = id;
+  renderRecordsTable();
 }
 
 function viewRecord(id) {
@@ -416,28 +811,45 @@ function setDailyTab(tab, el) {
 }
 
 function renderDaily() {
+  renderTableHead('daily-thead','daily',[
+    {label:'ID',sortKey:'id'},{label:'Title',sortKey:'title'},{label:'Status',sortKey:'status'},
+    {label:'Priority',sortKey:'priority'},{label:'Created By',sortKey:'createdBy'},{label:'Time',sortKey:'createdAt'}
+  ]);
   const filterFns={ today:isToday, yesterday:isYesterday, week:isThisWeek, month:isThisMonth };
   const fn=filterFns[dailyTab]||isToday;
-  const filtered=records.filter(r=>fn(r.createdAt));
+  let filtered=records.filter(r=>fn(r.createdAt));
+  const statusFilter=document.getElementById('daily-filter-status')?.value || '';
+  const priorityFilter=document.getElementById('daily-filter-priority')?.value || '';
+  if(statusFilter) filtered=filtered.filter(r=>r.status===statusFilter);
+  if(priorityFilter) filtered=filtered.filter(r=>r.priority===priorityFilter);
+  if(tableState.daily.query) {
+    const q=tableState.daily.query;
+    filtered=filtered.filter(r=>r.title?.toLowerCase().includes(q)||r.createdBy?.toLowerCase().includes(q)||r.department?.toLowerCase().includes(q)||r.status?.toLowerCase().includes(q));
+  }
   const titles={ today:"Today's Records", yesterday:"Yesterday's Records", week:"This Week's Records", month:"This Month's Records" };
   document.getElementById('daily-table-title').textContent=titles[dailyTab];
   const completed=filtered.filter(r=>r.status==='completed').length;
   const pending=filtered.filter(r=>r.status==='pending').length;
+  document.getElementById('daily-count-label').textContent=`${filtered.length} matching record${filtered.length!==1?'s':''}`;
   document.getElementById('daily-stats').innerHTML=`
     <div class="stat-card"><div class="stat-label">Total Entries</div><div class="stat-value">${filtered.length}</div></div>
     <div class="stat-card"><div class="stat-label"><i class="ti ti-circle-check" style="font-size:14px;color:var(--success)"></i>Completed</div><div class="stat-value">${completed}</div></div>
     <div class="stat-card"><div class="stat-label"><i class="ti ti-clock" style="font-size:14px;color:var(--warning)"></i>Pending</div><div class="stat-value">${pending}</div></div>`;
   const tbody=document.getElementById('daily-tbody');
-  if(!filtered.length){ tbody.innerHTML=`<tr><td colspan="6"><div class="empty-state"><i class="ti ti-calendar-off"></i>No records for this period</div></td></tr>`; return; }
-  tbody.innerHTML=filtered.map(r=>`
-    <tr>
+  if(recordsLoading){ tbody.innerHTML=rowLoading(6); renderPagination('daily',0,1); return; }
+  if(!filtered.length){ tbody.innerHTML=rowEmpty(6,'ti-calendar-off','No records for this period'); renderPagination('daily',0,1); return; }
+  filtered = filtered.sort(compareRows(tableState.daily.sortKey, tableState.daily.sortDir));
+  const paged = paginateData('daily', filtered);
+  tbody.innerHTML=paged.rows.map(r=>`
+    <tr class="${selectedRecordId===r.id?'row-selected':''}" onclick="selectedRecordId='${r.id}'; renderDaily();">
       <td><span style="font-family:monospace;font-size:11px;color:var(--text3)">${r.id}</span></td>
-      <td class="td-main">${r.title}</td>
+      <td class="td-main">${escapeHtml(r.title)}</td>
       <td>${statusBadge(r.status)}</td>
       <td>${priorityBadge(r.priority)}</td>
-      <td>${r.createdBy}</td>
+      <td>${escapeHtml(r.createdBy)}</td>
       <td style="white-space:nowrap">${fmtTime(r.createdAt)}</td>
     </tr>`).join('');
+  renderPagination('daily', filtered.length, paged.totalPages);
 }
 
 // ============================================================
@@ -520,6 +932,11 @@ function renderAudit() {
 }
 
 function exportAudit() {
+  if(isServerBacked) {
+    window.location.href = '/api/audit/export';
+    toast('Audit export started');
+    return;
+  }
   const rows=[['ID','Action','Record','Note','By','Timestamp'],...auditLog.map(a=>[a.id,a.action,a.recordTitle,a.note,a.by,a.at])];
   downloadCSV(rows,'audit_log_'+Date.now()+'.csv');
 }
@@ -527,13 +944,22 @@ function exportAudit() {
 // ============================================================
 // BACKUP
 // ============================================================
-function createBackup() {
-  const backup={ id:genId(), createdAt:new Date().toISOString(), by:currentUser(), size:JSON.stringify({records,auditLog}).length, recordCount:records.length };
-  backups.unshift(backup);
-  if(backups.length>10) backups=backups.slice(0,10);
-  save();
-  toast('Backup created successfully');
-  renderBackup();
+async function createBackup() {
+  try {
+    if(isServerBacked) {
+      const res = await api('/api/backups', { method:'POST', body:JSON.stringify({}) });
+      backups.unshift(normalizeBackup(res.backup));
+    } else {
+      const backup={ id:genId(), createdAt:new Date().toISOString(), by:currentUser(), size:JSON.stringify({records,auditLog}).length, recordCount:records.length };
+      backups.unshift(backup);
+    }
+    if(backups.length>10) backups=backups.slice(0,10);
+    save();
+    toast('Backup created successfully');
+    renderBackup();
+  } catch(err) {
+    toast(err.message || 'Could not create backup','error');
+  }
 }
 
 function renderBackup() {
@@ -541,53 +967,107 @@ function renderBackup() {
   document.getElementById('last-backup').textContent=backups[0]?fmtDateTime(backups[0].createdAt):'Never';
   document.getElementById('data-size').textContent=Math.round(JSON.stringify({records,auditLog}).length/1024)+' KB';
   const el=document.getElementById('backup-list');
-  if(!backups.length){ el.innerHTML='<div class="empty-state"><i class="ti ti-archive"></i>No backups yet. Create one now.</div>'; return; }
-  el.innerHTML=`<table style="width:100%;border-collapse:collapse"><thead><tr><th>Backup ID</th><th>Created At</th><th>Created By</th><th>Records</th><th>Size</th><th>Actions</th></tr></thead><tbody>`+
-    backups.map(b=>`<tr>
+  let data = backups;
+  if(tableState.backups.query) {
+    const q = tableState.backups.query;
+    data = data.filter(b=>String(b.id).toLowerCase().includes(q)||String(b.by||'').toLowerCase().includes(q)||String(b.recordCount).includes(q));
+  }
+  data = data.sort(compareRows(tableState.backups.sortKey, tableState.backups.sortDir));
+  const paged = paginateData('backups', data);
+  el.innerHTML=`<div class="table-wrap"><table class="data-table"><thead id="backups-thead"></thead><tbody id="backups-tbody"></tbody></table></div><div class="table-footer" id="backups-pagination"></div>`;
+  renderTableHead('backups-thead','backups',[
+    {label:'Backup ID',sortKey:'id'},{label:'Created At',sortKey:'createdAt'},{label:'Created By',sortKey:'by'},
+    {label:'Records',sortKey:'recordCount'},{label:'Size',sortKey:'size'},{label:'Actions'}
+  ]);
+  const tbody=document.getElementById('backups-tbody');
+  if(!data.length){ tbody.innerHTML=rowEmpty(6,'ti-archive','No backups found'); renderPagination('backups',0,1); return; }
+  tbody.innerHTML=paged.rows.map(b=>`<tr>
       <td><span style="font-family:monospace;font-size:11px;color:var(--text3)">${b.id}</span></td>
-      <td>${fmtDateTime(b.createdAt)}</td><td>${b.by}</td>
+      <td>${fmtDateTime(b.createdAt)}</td><td>${escapeHtml(b.by || currentUser())}</td>
       <td>${b.recordCount}</td>
       <td>${Math.round(b.size/1024)} KB</td>
       <td><button class="btn btn-secondary btn-sm" onclick="restoreBackup('${b.id}')"><i class="ti ti-restore"></i>Restore</button></td>
-    </tr>`).join('')+'</tbody></table>';
+    </tr>`).join('');
+  renderPagination('backups', data.length, paged.totalPages);
 }
 
-function restoreBackup(id) {
+async function restoreBackup(id) {
   const b=backups.find(x=>x.id===id);
   if(!b||!confirm('Restore from this backup? Current data will be replaced.')) return;
-  toast('Backup restored (in a live system, this would reload from stored snapshot)','info');
+  try {
+    if(isServerBacked) {
+      await api(`/api/backups/${id}/restore`, { method:'POST', body:JSON.stringify({}) });
+      await loadServerData();
+      toast('Backup restored','info');
+    } else {
+      toast('Backup restored (local demo backup metadata only)','info');
+    }
+  } catch(err) {
+    toast(err.message || 'Could not restore backup','error');
+  }
 }
 
 // ============================================================
 // USERS
 // ============================================================
 function renderUsers() {
+  renderTableHead('users-thead','users',[
+    {label:'User',sortKey:'name'},{label:'Role',sortKey:'role'},{label:'Records Created',sortKey:'recordCount'},
+    {label:'Last Active',sortKey:'lastActive'},{label:'Status',sortKey:'active'}
+  ]);
   const tbody=document.getElementById('users-tbody');
   const counts={};
   records.forEach(r=>{ counts[r.createdBy]=(counts[r.createdBy]||0)+1; });
   const last={};
   records.forEach(r=>{ if(!last[r.createdBy]||r.createdAt>last[r.createdBy]) last[r.createdBy]=r.createdAt; });
-  tbody.innerHTML=users.map(u=>`<tr>
+  let data = users.map(u=>({
+    ...u,
+    recordCount: u.record_count ?? counts[u.name] ?? 0,
+    lastActive: u.last_active ?? last[u.name] ?? ''
+  }));
+  const roleFilter = document.getElementById('users-filter-role')?.value || '';
+  if(roleFilter) data = data.filter(u=>u.role===roleFilter);
+  if(tableState.users.query) {
+    const q=tableState.users.query;
+    data=data.filter(u=>u.name?.toLowerCase().includes(q)||u.email?.toLowerCase().includes(q)||u.role?.toLowerCase().includes(q));
+  }
+  data = data.sort(compareRows(tableState.users.sortKey, tableState.users.sortDir));
+  const paged = paginateData('users', data);
+  if(!data.length){ tbody.innerHTML=rowEmpty(5,'ti-users','No users found'); renderPagination('users',0,1); return; }
+  tbody.innerHTML=paged.rows.map(u=>`<tr>
     <td><div class="flex-center">
-      <div class="user-avatar" style="width:30px;height:30px;font-size:11px">${u.name.split(' ').map(n=>n[0]).join('').slice(0,2)}</div>
-      <div><div style="font-size:13px;font-weight:500;color:var(--text1)">${u.name}</div><div class="text-xs">${u.email||'â€”'}</div></div>
+      <div class="user-avatar" style="width:30px;height:30px;font-size:11px">${escapeHtml(u.name.split(' ').map(n=>n[0]).join('').slice(0,2))}</div>
+      <div><div style="font-size:13px;font-weight:500;color:var(--text1)">${escapeHtml(u.name)}</div><div class="text-xs">${escapeHtml(u.email||'â€”')}</div></div>
     </div></td>
-    <td><span class="badge badge-default">${u.role}</span></td>
-    <td>${counts[u.name]||0}</td>
-    <td>${last[u.name]?fmtDate(last[u.name]):'Never'}</td>
-    <td><span class="badge badge-success">Active</span></td>
+    <td><span class="badge badge-default">${escapeHtml(u.role)}</span></td>
+    <td>${u.recordCount}</td>
+    <td>${u.lastActive?fmtDate(u.lastActive):'Never'}</td>
+    <td><span class="badge badge-${u.active===false?'warning':'success'}">${u.active===false?'Inactive':'Active'}</span></td>
   </tr>`).join('');
+  renderPagination('users', data.length, paged.totalPages);
 }
 
 function openAddUserModal() { document.getElementById('user-modal-overlay').classList.add('open'); }
-function addUser() {
+async function addUser() {
   const name=document.getElementById('nu-name').value.trim();
   if(!name){ toast('Name is required','error'); return; }
-  users.push({ id:genId(), name, role:document.getElementById('nu-role').value, email:document.getElementById('nu-email').value, createdAt:new Date().toISOString(), active:true });
-  save();
-  document.getElementById('user-modal-overlay').classList.remove('open');
-  renderUsers();
-  toast('User added');
+  const payload = { name, role:document.getElementById('nu-role').value, email:document.getElementById('nu-email').value };
+  try {
+    if(isServerBacked) {
+      const res = await api('/api/users', { method:'POST', body:JSON.stringify(payload) });
+      users.push(res.user);
+    } else {
+      users.push({ id:genId(), ...payload, createdAt:new Date().toISOString(), active:true });
+    }
+    save();
+    document.getElementById('user-modal-overlay').classList.remove('open');
+    document.getElementById('nu-name').value='';
+    document.getElementById('nu-email').value='';
+    renderUsers();
+    toast('User added');
+  } catch(err) {
+    toast(err.message || 'Could not add user','error');
+  }
 }
 
 // ============================================================
@@ -599,15 +1079,26 @@ function loadSettings() {
   document.getElementById('set-backup').value=settings.backup||'Daily';
   document.getElementById('set-default-status').value=settings.defaultStatus||'pending';
 }
-function saveSettings() {
+async function saveSettings() {
   settings.username=document.getElementById('set-username').value||'Admin User';
   settings.role=document.getElementById('set-role').value;
   settings.backup=document.getElementById('set-backup').value;
   settings.defaultStatus=document.getElementById('set-default-status').value;
+  try {
+    if(isServerBacked) {
+      await api('/api/settings', { method:'PUT', body:JSON.stringify({
+        username: settings.username,
+        role: settings.role,
+        backup_freq: settings.backup,
+        default_status: settings.defaultStatus
+      }) });
+    }
+  } catch(err) {
+    toast(err.message || 'Could not save settings','error');
+    return;
+  }
   save();
-  document.getElementById('sidebar-username').textContent=settings.username;
-  document.getElementById('sidebar-role').textContent=settings.role;
-  document.getElementById('sidebar-avatar').textContent=settings.username.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase();
+  syncShell();
   toast('Settings saved');
 }
 
@@ -623,6 +1114,11 @@ function globalSearch(q) {
 // EXPORT
 // ============================================================
 function exportCSV() {
+  if(isServerBacked) {
+    window.location.href = '/api/export/csv';
+    toast('Export started');
+    return;
+  }
   const rows=[['ID','Title','Department','Priority','Status','Assigned To','Created By','Created At','Updated By','Updated At','Tags','Description'],
     ...records.map(r=>[r.id,r.title,r.department,r.priority,r.status,r.assignedTo||'',r.createdBy,r.createdAt,r.updatedBy||'',r.updatedAt,(r.tags||[]).join(';'),r.description||''])];
   downloadCSV(rows,'records_export_'+Date.now()+'.csv');
@@ -670,7 +1166,17 @@ function autoBackup() {
 // ============================================================
 // SEED DATA
 // ============================================================
-function seedData() {
+async function seedData() {
+  if(isServerBacked) {
+    try {
+      await api('/api/seed', { method:'POST', body:JSON.stringify({}) });
+      await loadServerData();
+      toast('10 sample records added');
+    } catch(err) {
+      toast(err.message || 'Could not seed data','error');
+    }
+    return;
+  }
   const titles=['Q3 Performance Review','Client Onboarding â€” TechCorp','Marketing Campaign Launch','Infrastructure Upgrade','Budget Reconciliation Q4','Product Roadmap Update','Security Audit','Team Restructuring','Vendor Contract Renewal','Annual Compliance Review'];
   const depts=['Engineering','Marketing','Sales','HR','Finance','Operations','Product','Design'];
   const statuses=['pending','in-progress','completed','cancelled'];
@@ -699,8 +1205,18 @@ function seedData() {
   toast('10 sample records added');
 }
 
-function clearAllData() {
+async function clearAllData() {
   if(!confirm('This will permanently delete ALL records and audit logs. Are you sure?')) return;
+  if(isServerBacked) {
+    try {
+      await api('/api/clear', { method:'POST', body:JSON.stringify({}) });
+      await loadServerData();
+      toast('All data cleared','info');
+    } catch(err) {
+      toast(err.message || 'Could not clear data','error');
+    }
+    return;
+  }
   records=[]; auditLog=[];
   save(); renderDashboard(); renderRecordsTable();
   document.getElementById('nav-count').textContent=0;
@@ -712,12 +1228,10 @@ function clearAllData() {
 // ============================================================
 document.addEventListener('DOMContentLoaded',()=>{
   setTheme(getTheme(), false);
-  document.getElementById('sidebar-username').textContent=settings.username;
-  document.getElementById('sidebar-role').textContent=settings.role;
-  document.getElementById('sidebar-avatar').textContent=settings.username.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase();
-  document.getElementById('nav-count').textContent=records.length;
+  syncShell();
   renderDashboard();
-  autoBackup();
+  renderRecordsTable();
+  loadServerData();
   document.body.classList.remove('app-loading');
 });
 

@@ -60,38 +60,54 @@
     <!-- DASHBOARD PAGE -->
     <div class="page active" id="page-dashboard">
       <div class="stats-grid">
-        <div class="stat-card">
-          <div class="stat-label"><i class="ti ti-database" style="font-size:14px;color:var(--accent)"></i>Total Records</div>
+        <div class="stat-card stat-card-accent">
+          <div class="stat-icon"><i class="ti ti-database"></i></div>
+          <div class="stat-label">Total Records</div>
           <div class="stat-value" id="stat-total">0</div>
           <div class="stat-change up" id="stat-total-change"><i class="ti ti-trending-up"></i><span>0 today</span></div>
+          <div class="stat-compare" id="stat-total-compare">Compared with yesterday</div>
         </div>
-        <div class="stat-card">
-          <div class="stat-label"><i class="ti ti-circle-check" style="font-size:14px;color:var(--success)"></i>Completed</div>
+        <div class="stat-card stat-card-success">
+          <div class="stat-icon"><i class="ti ti-circle-check"></i></div>
+          <div class="stat-label">Completed</div>
           <div class="stat-value" id="stat-completed">0</div>
           <div class="stat-change up" id="stat-completed-pct"><span>0% completion rate</span></div>
+          <div class="stat-compare" id="stat-completed-compare">Completion quality</div>
         </div>
-        <div class="stat-card">
-          <div class="stat-label"><i class="ti ti-clock" style="font-size:14px;color:var(--warning)"></i>Pending</div>
+        <div class="stat-card stat-card-warning">
+          <div class="stat-icon"><i class="ti ti-clock"></i></div>
+          <div class="stat-label">Pending</div>
           <div class="stat-value" id="stat-pending">0</div>
           <div class="stat-change" id="stat-pending-sub" style="color:var(--text3)"><span>Awaiting action</span></div>
+          <div class="stat-compare" id="stat-pending-compare">Open workload</div>
         </div>
-        <div class="stat-card">
-          <div class="stat-label"><i class="ti ti-refresh" style="font-size:14px;color:var(--info)"></i>Updated Today</div>
+        <div class="stat-card stat-card-info">
+          <div class="stat-icon"><i class="ti ti-refresh"></i></div>
+          <div class="stat-label">Updated Today</div>
           <div class="stat-value" id="stat-updated">0</div>
-          <div class="stat-change" style="color:var(--text3)"><span>Real-time tracking</span></div>
+          <div class="stat-change" id="stat-updated-change" style="color:var(--text3)"><span>Real-time tracking</span></div>
+          <div class="stat-compare" id="stat-updated-compare">Edits excluding new records</div>
         </div>
       </div>
 
-      <div class="two-col">
+      <div class="analytics-grid">
         <div class="card">
           <div class="card-header">
-            <div><div class="card-title">Activity Overview (Last 7 Days)</div><div class="card-sub">Records added and updated per day</div></div>
+            <div><div class="card-title">Daily Records</div><div class="card-sub">Created versus updated over the past week</div></div>
           </div>
-          <div class="chart-container"><canvas id="activityChart" role="img" aria-label="Activity chart showing records added and updated over the past 7 days"></canvas></div>
+          <div class="chart-container"><canvas id="dailyRecordsChart" role="img" aria-label="Daily records chart"></canvas></div>
         </div>
         <div class="card">
-          <div class="card-header"><div class="card-title">Status Breakdown</div></div>
-          <div class="chart-container" style="height:200px"><canvas id="statusChart" role="img" aria-label="Donut chart showing record status distribution"></canvas></div>
+          <div class="card-header"><div><div class="card-title">Weekly Trend</div><div class="card-sub">Rolling seven day activity</div></div></div>
+          <div class="chart-container"><canvas id="weeklyTrendChart" role="img" aria-label="Weekly trend chart"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Monthly Growth</div><div class="card-sub">Record volume by month</div></div></div>
+          <div class="chart-container"><canvas id="monthlyGrowthChart" role="img" aria-label="Monthly growth chart"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Category Distribution</div><div class="card-sub">Department mix across all records</div></div></div>
+          <div class="chart-container"><canvas id="categoryDistributionChart" role="img" aria-label="Category distribution chart"></canvas></div>
         </div>
       </div>
 
@@ -116,6 +132,7 @@
         <div class="card-header compact-card-header">
           <div><div class="card-title">All Records</div><div class="card-sub loading-text" id="records-count-label">Loading...</div></div>
           <div class="toolbar-row">
+            <div class="search-box table-search"><i class="ti ti-search search-icon"></i><input type="text" placeholder="Search table..." oninput="setTableQuery('records', this.value)" /></div>
             <select class="control-sm" id="filter-status" onchange="renderRecordsTable()">
               <option value="">All Status</option>
               <option value="completed">Completed</option>
@@ -129,19 +146,19 @@
               <option value="medium">Medium</option>
               <option value="low">Low</option>
             </select>
+            <select class="control-sm" id="filter-department" onchange="renderRecordsTable()">
+              <option value="">All Departments</option>
+            </select>
             <button class="btn btn-secondary btn-sm" onclick="exportCSV()"><i class="ti ti-download"></i>Export</button>
           </div>
         </div>
         <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>ID</th><th>Title</th><th>Department</th><th>Priority</th><th>Status</th><th>Created By</th><th>Created</th><th>Last Updated</th><th>Actions</th>
-              </tr>
-            </thead>
+          <table class="data-table">
+            <thead id="records-thead"></thead>
             <tbody id="records-tbody"></tbody>
           </table>
         </div>
+        <div class="table-footer" id="records-pagination"></div>
       </div>
     </div>
 
@@ -155,11 +172,30 @@
       </div>
       <div class="stats-grid stats-grid-3" id="daily-stats"></div>
       <div class="card">
-        <div class="card-header"><div class="card-title" id="daily-table-title">Today's Records</div></div>
+        <div class="card-header">
+          <div><div class="card-title" id="daily-table-title">Today's Records</div><div class="card-sub" id="daily-count-label">Loading...</div></div>
+          <div class="toolbar-row">
+            <div class="search-box table-search"><i class="ti ti-search search-icon"></i><input type="text" placeholder="Search daily..." oninput="setTableQuery('daily', this.value)" /></div>
+            <select class="control-sm" id="daily-filter-status" onchange="renderDaily()">
+              <option value="">All Status</option>
+              <option value="completed">Completed</option>
+              <option value="pending">Pending</option>
+              <option value="in-progress">In Progress</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+            <select class="control-sm" id="daily-filter-priority" onchange="renderDaily()">
+              <option value="">All Priority</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </div>
+        </div>
         <div class="table-wrap">
-          <table><thead><tr><th>ID</th><th>Title</th><th>Status</th><th>Priority</th><th>Created By</th><th>Time</th></tr></thead>
+          <table class="data-table"><thead id="daily-thead"></thead>
           <tbody id="daily-tbody"></tbody></table>
         </div>
+        <div class="table-footer" id="daily-pagination"></div>
       </div>
     </div>
 
@@ -222,7 +258,10 @@
       <div class="card">
         <div class="card-header">
           <div><div class="card-title">Backup Management</div><div class="card-sub">Create, restore, and manage database backups</div></div>
-          <button class="btn btn-primary" onclick="createBackup()"><i class="ti ti-archive"></i>Create Backup Now</button>
+          <div class="toolbar-row">
+            <div class="search-box table-search"><i class="ti ti-search search-icon"></i><input type="text" placeholder="Search backups..." oninput="setTableQuery('backups', this.value)" /></div>
+            <button class="btn btn-primary" onclick="createBackup()"><i class="ti ti-archive"></i>Create Backup Now</button>
+          </div>
         </div>
         <div id="backup-list"></div>
       </div>
@@ -233,14 +272,25 @@
       <div class="card">
         <div class="card-header">
           <div><div class="card-title">System Users</div><div class="card-sub">Manage users and their activity</div></div>
-          <button class="btn btn-primary" onclick="openAddUserModal()"><i class="ti ti-user-plus"></i>Add User</button>
+          <div class="toolbar-row">
+            <div class="search-box table-search"><i class="ti ti-search search-icon"></i><input type="text" placeholder="Search users..." oninput="setTableQuery('users', this.value)" /></div>
+            <select class="control-sm" id="users-filter-role" onchange="renderUsers()">
+              <option value="">All Roles</option>
+              <option>Administrator</option>
+              <option>Manager</option>
+              <option>Analyst</option>
+              <option>Viewer</option>
+            </select>
+            <button class="btn btn-primary" onclick="openAddUserModal()"><i class="ti ti-user-plus"></i>Add User</button>
+          </div>
         </div>
         <div class="table-wrap">
-          <table>
-            <thead><tr><th>User</th><th>Role</th><th>Records Created</th><th>Last Active</th><th>Status</th></tr></thead>
+          <table class="data-table">
+            <thead id="users-thead"></thead>
             <tbody id="users-tbody"></tbody>
           </table>
         </div>
+        <div class="table-footer" id="users-pagination"></div>
       </div>
     </div>
 
